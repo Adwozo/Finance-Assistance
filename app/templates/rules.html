@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Rules · Finance Assistance{% endblock %}
+{% block header %}Categorization rules{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+  <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-4">
+    <div class="flex items-center justify-between mb-3">
+      <div class="font-medium">Existing rules</div>
+      <button id="apply" class="px-3 py-1.5 text-sm rounded-md bg-brand-500 text-white hover:bg-brand-600">Apply to all transactions</button>
+    </div>
+    <div id="rules" class="divide-y divide-slate-100 text-sm"></div>
+  </div>
+
+  <div class="bg-white rounded-xl border border-slate-200 p-4">
+    <div class="font-medium mb-3">Add rule</div>
+    <form id="add-rule" class="space-y-3 text-sm">
+      <select name="field" class="w-full border border-slate-300 rounded-md px-3 py-2">
+        <option value="description">Match: description</option>
+        <option value="account">Match: account</option>
+        <option value="amount">Match: amount</option>
+      </select>
+      <input name="pattern" required placeholder="Pattern (substring or regex)" class="w-full border border-slate-300 rounded-md px-3 py-2">
+      <label class="flex items-center gap-2"><input type="checkbox" name="is_regex"> Use regex</label>
+      <span id="rule-category-slot" class="block"></span>
+      <input type="hidden" name="category_id" id="rule-category-input" required>
+      <input type="number" name="priority" value="0" class="w-full border border-slate-300 rounded-md px-3 py-2">
+      <button class="w-full bg-brand-500 text-white rounded-md py-2 hover:bg-brand-600">Add rule</button>
+    </form>
+  </div>
+</div>
+
+<script>
+async function loadCats() {
+  const cats = await fetch('/api/categories').then(r => r.json());
+  window._cats = cats;
+  // Picker for the Add-rule form (no empty option — a rule needs a target).
+  const slot = document.getElementById('rule-category-slot');
+  const hidden = document.getElementById('rule-category-input');
+  window.initCategoryPicker(slot, {
+    value: null,
+    allowEmpty: false,
+    emptyLabel: 'Choose category…',
+    onChange: (id) => { hidden.value = id || ''; },
+  });
+}
+async function loadRules() {
+  const rules = await fetch('/api/rules').then(r => r.json());
+  const el = document.getElementById('rules');
+  if (!rules.length) { el.innerHTML = '<div class="text-slate-400 py-4">No rules yet.</div>'; return; }
+  el.innerHTML = rules.map(r => {
+    const c = (window._cats||[]).find(c => c.id === r.category_id);
+    return `<div class="flex items-center justify-between py-2.5">
+      <div>
+        <span class="font-medium">${r.field}</span> ~ <code class="bg-slate-100 px-1 rounded">${r.pattern}</code>
+        ${r.is_regex ? '<span class="text-xs text-slate-400">(regex)</span>' : ''}
+        → <span style="color:${c?.color||'#64748b'}">${c?.name || '—'}</span>
+        <span class="text-xs text-slate-400">priority ${r.priority}</span>
+      </div>
+      <button onclick="delRule(${r.id})" class="text-xs text-slate-400 hover:text-rose-600">Delete</button>
+    </div>`;
+  }).join('');
+}
+document.getElementById('add-rule').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const payload = Object.fromEntries(fd.entries());
+  payload.is_regex = !!payload.is_regex;
+  payload.priority = Number(payload.priority) || 0;
+  payload.category_id = Number(payload.category_id);
+  await fetch('/api/rules', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  e.target.reset(); document.querySelector('input[name="priority"]').value = 0;
+  loadRules();
+});
+async function delRule(id) {
+  await fetch(`/api/rules/${id}`, { method: 'DELETE' }); loadRules();
+}
+document.getElementById('apply').addEventListener('click', async () => {
+  const r = await fetch('/api/rules/apply', { method: 'POST' }).then(r => r.json());
+  alert(`Assigned categories to ${r.assigned} transaction(s).`);
+});
+loadCats().then(loadRules);
+</script>
+{% endblock %}

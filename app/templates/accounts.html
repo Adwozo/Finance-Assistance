@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Accounts · Finance Assistance{% endblock %}
+{% block header %}Accounts{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+  <!-- List -->
+  <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-4">
+    <div class="font-medium mb-3">Your accounts</div>
+    <div id="acc-list" class="divide-y divide-slate-100 text-sm">
+      <div class="text-slate-400 py-4">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Create -->
+  <div class="bg-white rounded-xl border border-slate-200 p-4">
+    <div class="font-medium mb-3">Add account</div>
+    <form id="add-form" class="space-y-3 text-sm">
+      <input name="name" required placeholder="Account name" class="w-full border border-slate-300 rounded-md px-3 py-2">
+      <input name="institution" placeholder="Institution (optional)" class="w-full border border-slate-300 rounded-md px-3 py-2">
+      <div class="grid grid-cols-2 gap-2">
+        <input name="currency" value="HKD" class="border border-slate-300 rounded-md px-3 py-2" placeholder="Currency">
+        <select name="type" class="border border-slate-300 rounded-md px-3 py-2">
+          <option value="checking">Checking</option>
+          <option value="savings">Savings</option>
+          <option value="credit_card">Credit card</option>
+          <option value="investment">Investment</option>
+        </select>
+      </div>
+      <p class="text-xs text-slate-500">Set type to <b>Investment</b> for brokerage accounts so buys/sells are treated as asset swaps (not spending/income), while dividends & interest still count as income.</p>
+      <button class="w-full bg-brand-500 text-white rounded-md py-2 hover:bg-brand-600">Add account</button>
+    </form>
+  </div>
+</div>
+
+<script>
+const TYPE_LABEL = { checking: 'Checking', savings: 'Savings', credit_card: 'Credit card', investment: 'Investment' };
+const TYPE_COLOR = { checking: 'bg-slate-100 text-slate-600', savings: 'bg-blue-100 text-blue-700', credit_card: 'bg-amber-100 text-amber-700', investment: 'bg-violet-100 text-violet-700' };
+
+async function loadAccounts() {
+  const accs = await fetch('/api/accounts').then(r => r.json());
+  const el = document.getElementById('acc-list');
+  if (!accs.length) { el.innerHTML = '<div class="text-slate-400 py-4">No accounts yet.</div>'; return; }
+  el.innerHTML = accs.map(a => `
+    <div class="flex items-center justify-between py-2.5 gap-3">
+      <div class="min-w-0">
+        <div class="font-medium truncate">${a.name}</div>
+        <div class="text-xs text-slate-400">${a.institution || '—'} · ${a.currency}</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs px-2 py-1 rounded ${TYPE_COLOR[a.type] || TYPE_COLOR.checking}">${TYPE_LABEL[a.type] || a.type}</span>
+        <select onchange="updateType(${a.id}, this.value)" class="border border-slate-200 rounded px-2 py-1 text-xs">
+          ${Object.entries(TYPE_LABEL).map(([k,v]) => `<option value="${k}" ${k===a.type?'selected':''}>${v}</option>`).join('')}
+        </select>
+        <button onclick="delAcc(${a.id})" class="text-xs text-slate-400 hover:text-rose-600">Delete</button>
+      </div>
+    </div>`).join('');
+}
+
+async function updateType(id, type) {
+  await fetch(`/api/accounts/${id}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ type }),
+  });
+  // Re-classify investment transactions after a type change.
+  await fetch('/api/investments/classify', { method: 'POST' });
+  loadAccounts();
+}
+
+document.getElementById('add-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const payload = Object.fromEntries(fd.entries());
+  await fetch('/api/accounts', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload),
+  });
+  e.target.reset();
+  document.querySelector('input[name="currency"]').value = 'HKD';
+  loadAccounts();
+});
+
+async function delAcc(id) {
+  if (!confirm('Delete this account and all its transactions?')) return;
+  await fetch(`/api/accounts/${id}`, { method: 'DELETE' });
+  loadAccounts();
+}
+loadAccounts();
+</script>
+{% endblock %}

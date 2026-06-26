@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-50">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Finance Assistance{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script>window.DEFAULT_CURRENCY = "{{ default_currency }}";</script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50:'#eef6ff',100:'#d9eaff',500:'#2f80ed',600:'#1f6fd6',700:'#1a5bb0' }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="h-full text-slate-800">
+  <div class="flex min-h-full">
+    <!-- Sidebar -->
+    <aside class="w-64 shrink-0 bg-white border-r border-slate-200 flex flex-col">
+      <div class="px-5 py-5 border-b border-slate-200">
+        <div class="flex items-center gap-2">
+          <div class="w-9 h-9 rounded-lg bg-brand-500 text-white grid place-items-center font-bold">$</div>
+          <div>
+            <div class="font-semibold leading-tight">Finance</div>
+            <div class="text-xs text-slate-500 leading-tight">Assistance</div>
+          </div>
+        </div>
+      </div>
+
+      <nav class="px-3 py-3 space-y-1">
+        {% set nav = [
+          ('dashboard','Dashboard','/'),
+          ('transactions','Transactions','/transactions'),
+          ('spending','Spending','/spending'),
+          ('action','Action Needed','/action'),
+          ('categories','Categories','/categories'),
+          ('accounts','Accounts','/accounts'),
+          ('import','Import','/import'),
+          ('rules','Rules','/rules')
+        ] %}
+        {% for key,label,href in nav %}
+        <a href="{{ href }}"
+           class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium
+                  {% if active == key %}bg-brand-50 text-brand-700{% else %}text-slate-600 hover:bg-slate-100{% endif %}">
+          <span class="w-1.5 h-1.5 rounded-full {% if active == key %}bg-brand-500{% else %}bg-slate-300{% endif %}"></span>
+          {{ label }}
+        </a>
+        {% endfor %}
+      </nav>
+
+      <div class="px-4 pt-4 pb-2 text-xs uppercase tracking-wide text-slate-400">Accounts</div>
+      <div class="px-3 space-y-1 overflow-y-auto">
+        {% for a in accounts %}
+        <div class="flex items-center justify-between px-3 py-1.5 rounded text-sm text-slate-600 hover:bg-slate-100">
+          <span class="truncate">{{ a.name }}</span>
+          <span class="text-xs text-slate-400">{{ a.currency }}</span>
+        </div>
+        {% else %}
+        <div class="px-3 py-1.5 text-xs text-slate-400">No accounts yet.</div>
+        {% endfor %}
+      </div>
+
+      <div class="px-4 pt-4 pb-2 text-xs uppercase tracking-wide text-slate-400">Categories</div>
+      <div class="px-3 pb-6 overflow-y-auto max-h-64">
+        {% macro cat_node(node) %}
+        <div class="flex items-center gap-2 px-2 py-1 text-sm text-slate-600">
+          <span class="w-2.5 h-2.5 rounded-sm" style="background:{{ node.color }}"></span>
+          <span class="truncate">{{ node.name }}</span>
+        </div>
+        {% for c in node.children %}
+        <div class="ml-4">{{ cat_node(c) }}</div>
+        {% endfor %}
+        {% endmacro %}
+        {% for node in category_tree %}{{ cat_node(node) }}{% endfor %}
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="flex-1 flex flex-col min-w-0">
+      <header class="bg-white border-b border-slate-200 px-6 py-3 flex items-center gap-4">
+        <div class="text-lg font-semibold">{% block header %}{% endblock %}</div>
+        <div class="flex-1"></div>
+        <a href="/import" class="px-3 py-1.5 text-sm rounded-md bg-brand-500 text-white hover:bg-brand-600">Import statements</a>
+      </header>
+
+      <main class="flex-1 overflow-y-auto p-6">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+  <!-- Global CategoryPicker widget. Exposes window.initCategoryPicker(el, opts)
+       where opts = { value, onChange(id,name,color), allowEmpty, emptyLabel }.
+       Renders a button (color dot + indented name) that opens a searchable,
+       tree-structured dropdown. The tree comes from /api/categories/tree. -->
+  <style>
+    .catpicker { position: relative; display: inline-block; }
+    .catpicker.catpicker-block { display: block; }
+    .catpicker.catpicker-block .catpicker-btn { display: flex; width: 100%; max-width: none; }
+    .catpicker-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 4px 10px; font-size: 12px; line-height: 1.4;
+      background: #fff; color: #334155; cursor: pointer; white-space: nowrap;
+      max-width: 220px; transition: border-color .12s, box-shadow .12s;
+    }
+    .catpicker-btn:hover { border-color: #94a3b8; }
+    .catpicker-btn:focus { outline: none; border-color: #2f80ed; box-shadow: 0 0 0 2px rgba(47,128,237,0.18); }
+    .catpicker-btn .dot { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+    .catpicker-btn .label { overflow: hidden; text-overflow: ellipsis; }
+    .catpicker-btn.placeholder { color: #94a3b8; }
+    /* The panel is appended to <body> so it is never clipped by table/overflow
+       containers. It is positioned via JS each time it opens. */
+    .catpicker-panel {
+      position: fixed; z-index: 9999;
+      min-width: 260px; max-width: 340px; max-height: 340px;
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(15,23,42,0.18);
+      display: none; flex-direction: column; overflow: hidden;
+    }
+    .catpicker-panel.open { display: flex; }
+    .catpicker-search { padding: 10px; border-bottom: 1px solid #e2e8f0; }
+    .catpicker-search input {
+      width: 100%; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 7px 10px; font-size: 13px; box-sizing: border-box;
+    }
+    .catpicker-search input:focus { outline: none; border-color: #2f80ed; box-shadow: 0 0 0 2px rgba(47,128,237,0.18); }
+    .catpicker-list { overflow-y: auto; flex: 1; padding: 6px 0; }
+    .catpicker-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 12px; font-size: 13px; cursor: pointer; color: #334155;
+      border-left: 3px solid transparent;
+    }
+    .catpicker-item:hover { background: #f1f5f9; }
+    .catpicker-item.selected { background: #eef6ff; color: #1a5bb0; border-left-color: #2f80ed; }
+    .catpicker-item .dot { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+    .catpicker-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .catpicker-empty { padding: 18px; text-align: center; color: #94a3b8; font-size: 12px; }
+  </style>
+  <script>
+  (function () {
+    let _treePromise = null;
+    function loadTree() {
+      if (!_treePromise) _treePromise = fetch('/api/categories/tree').then(r => r.json());
+      return _treePromise;
+    }
+    function flatten(nodes, depth, out) {
+      for (const n of nodes || []) {
+        out.push({ id: n.id, name: n.name, color: n.color, depth });
+        flatten(n.children, depth + 1, out);
+      }
+      return out;
+    }
+    function findNode(flat, id) { return flat.find(n => n.id === id) || null; }
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+    }
+
+    window.initCategoryPicker = function (el, opts) {
+      opts = opts || {};
+      const allowEmpty = opts.allowEmpty !== false;
+      const emptyLabel = opts.emptyLabel || 'Uncategorized';
+      const onChange = opts.onChange || function () {};
+      let currentId = opts.value == null ? null : Number(opts.value);
+      let flat = [];
+      let open = false;
+
+      el.classList.add('catpicker');
+      if (el.classList.contains('block')) el.classList.add('catpicker-block');
+      el.innerHTML = '<button type="button" class="catpicker-btn"></button>';
+      const btn = el.querySelector('.catpicker-btn');
+
+      // The panel is a single shared element appended to <body> so it never
+      // gets clipped by table-cell / overflow-x-auto containers.
+      const panel = document.createElement('div');
+      panel.className = 'catpicker-panel';
+      panel.innerHTML =
+        '<div class="catpicker-search"><input type="search" placeholder="Search category…"></div>' +
+        '<div class="catpicker-list"></div>';
+      document.body.appendChild(panel);
+      const search = panel.querySelector('input');
+      const list = panel.querySelector('.catpicker-list');
+
+      function renderBtn() {
+        const node = findNode(flat, currentId);
+        if (!node) {
+          btn.classList.add('placeholder');
+          btn.innerHTML = '<span class="dot" style="background:#cbd5e1"></span><span class="label">' + escapeHtml(emptyLabel) + '</span>';
+        } else {
+          btn.classList.remove('placeholder');
+          // Indent the button label to reflect tree depth (using padding so it
+          // scales cleanly instead of fragile &nbsp; runs).
+          const pad = Math.max(0, node.depth) * 12;
+          btn.innerHTML = '<span class="dot" style="background:' + (node.color || '#94a3b8') + '"></span>' +
+            '<span class="label" style="padding-left:' + pad + 'px">' + escapeHtml(node.name) + '</span>';
+        }
+      }
+
+      function renderList(filter) {
+        const f = (filter || '').toLowerCase().trim();
+        const items = flat.filter(n => !f || n.name.toLowerCase().includes(f));
+        let html = '';
+        if (allowEmpty) {
+          html += '<div class="catpicker-item" data-id="">'
+            + '<span class="dot" style="background:#cbd5e1"></span>'
+            + '<span class="name">' + escapeHtml(emptyLabel) + '</span></div>';
+        }
+        for (const n of items) {
+          const sel = n.id === currentId ? ' selected' : '';
+          // Real indentation via padding-left keyed to tree depth.
+          const pad = 12 + n.depth * 14;
+          html += '<div class="catpicker-item' + sel + '" data-id="' + n.id + '" style="padding-left:' + pad + 'px">'
+            + '<span class="dot" style="background:' + (n.color || '#94a3b8') + '"></span>'
+            + '<span class="name">' + escapeHtml(n.name) + '</span></div>';
+        }
+        if (!html) html = '<div class="catpicker-empty">No categories match.</div>';
+        list.innerHTML = html;
+      }
+
+      function positionPanel() {
+        const r = btn.getBoundingClientRect();
+        const panelW = Math.max(260, Math.min(340, r.width + 40));
+        panel.style.minWidth = panelW + 'px';
+        let left = r.left;
+        let top = r.bottom + 4;
+        // Keep on screen.
+        if (left + panelW > window.innerWidth - 8) left = window.innerWidth - panelW - 8;
+        if (left < 8) left = 8;
+        // If it would overflow the bottom, open upward.
+        const maxH = 340;
+        if (top + maxH > window.innerHeight - 8) {
+          top = Math.max(8, r.top - maxH - 4);
+        }
+        panel.style.left = left + 'px';
+        panel.style.top = top + 'px';
+      }
+
+      function toggle(openState) {
+        open = (openState === undefined) ? !open : openState;
+        if (open) {
+          search.value = '';
+          renderList('');
+          positionPanel();
+          panel.classList.add('open');
+          // Defer focus so the click that opened it doesn't immediately close.
+          setTimeout(() => search.focus(), 0);
+        } else {
+          panel.classList.remove('open');
+        }
+      }
+
+      btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+      search.addEventListener('input', () => renderList(search.value));
+      panel.addEventListener('click', (e) => {
+        const item = e.target.closest('.catpicker-item');
+        if (!item) return;
+        const id = item.dataset.id;
+        currentId = id === '' ? null : Number(id);
+        const node = findNode(flat, currentId);
+        renderBtn();
+        toggle(false);
+        onChange(currentId, node ? node.name : null, node ? node.color : null);
+      });
+      // Close on outside click (the panel is in <body>, so check both).
+      document.addEventListener('click', (e) => {
+        if (open && !el.contains(e.target) && !panel.contains(e.target)) toggle(false);
+      });
+      // Close on Escape.
+      document.addEventListener('keydown', (e) => {
+        if (open && e.key === 'Escape') toggle(false);
+      });
+      // Reposition on scroll/resize while open.
+      window.addEventListener('scroll', () => { if (open) positionPanel(); }, true);
+      window.addEventListener('resize', () => { if (open) positionPanel(); });
+
+      loadTree().then(tree => {
+        flat = flatten(tree, 0, []);
+        renderBtn();
+      });
+
+      return {
+        get value() { return currentId; },
+        set value(id) { currentId = id == null ? null : Number(id); renderBtn(); },
+        reload() { _treePromise = null; return loadTree().then(t => { flat = flatten(t, 0, []); renderBtn(); }); },
+      };
+    };
+  })();
+  </script>
+</body>
+</html>

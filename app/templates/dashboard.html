@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Finance Assistance{% endblock %}
+{% block header %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <!-- Summary cards -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="cards">
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <div class="text-xs uppercase tracking-wide text-slate-400">Total balance</div>
+      <div class="text-2xl font-semibold mt-1" id="card-balance">—</div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <div class="text-xs uppercase tracking-wide text-slate-400">Spending this month</div>
+      <div class="text-2xl font-semibold mt-1 text-rose-600" id="card-spending">—</div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <div class="text-xs uppercase tracking-wide text-slate-400">Income this month</div>
+      <div class="text-2xl font-semibold mt-1 text-emerald-600" id="card-income">—</div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <div class="text-xs uppercase tracking-wide text-slate-400">Net this month</div>
+      <div class="text-2xl font-semibold mt-1" id="card-net">—</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="bg-white rounded-xl border border-slate-200 p-4 lg:col-span-1">
+      <div class="font-medium mb-3">Spending by category</div>
+      <div class="relative h-72"><canvas id="catChart"></canvas></div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-4 lg:col-span-2">
+      <div class="font-medium mb-3">6-month trend</div>
+      <div class="relative h-72"><canvas id="trendChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Recent transactions -->
+  <div class="bg-white rounded-xl border border-slate-200 p-4">
+    <div class="flex items-center justify-between mb-3">
+      <div class="font-medium">Recent transactions</div>
+      <a href="/transactions" class="text-sm text-brand-600 hover:underline">View all →</a>
+    </div>
+    <div id="recent" class="divide-y divide-slate-100">
+      <div class="text-sm text-slate-400 py-6 text-center">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Investments -->
+  <div class="bg-white rounded-xl border border-slate-200 p-4" id="investments-card">
+    <div class="flex items-center justify-between mb-3">
+      <div class="font-medium">Investments</div>
+      <span class="text-xs text-slate-400" id="inv-subtitle">This month</span>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-sm" id="inv-grid">
+      <div class="text-slate-400 py-4 col-span-full text-center">No investment accounts yet. Set an account's type to "investment" on the Accounts page.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function fmt(n) {
+  const v = Number(n || 0);
+  return v.toLocaleString(undefined, { style: 'currency', currency: window.DEFAULT_CURRENCY || 'HKD' });
+}
+async function load() {
+  const stats = await fetch('/api/stats').then(r => r.json());
+  document.getElementById('card-balance').textContent = fmt(stats.total_balance);
+  document.getElementById('card-spending').textContent = fmt(stats.spending_this_month);
+  document.getElementById('card-income').textContent = fmt(stats.income_this_month);
+  const net = document.getElementById('card-net');
+  net.textContent = fmt(stats.net_this_month);
+  net.classList.toggle('text-rose-600', stats.net_this_month < 0);
+  net.classList.toggle('text-emerald-600', stats.net_this_month >= 0);
+
+  // Category donut
+  const catData = stats.spending_by_category;
+  new Chart(document.getElementById('catChart'), {
+    type: 'doughnut',
+    data: {
+      labels: catData.map(d => d.name),
+      datasets: [{
+        data: catData.map(d => Math.abs(d.amount)),
+        backgroundColor: catData.map(d => d.color || '#94a3b8'),
+      }],
+    },
+    options: { plugins: { legend: { position: 'bottom' } }, cutout: '60%' },
+  });
+
+  // Trend line
+  const t = stats.monthly_trend;
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: t.map(d => d.month),
+      datasets: [
+        { label: 'Income', data: t.map(d => d.income), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', tension: 0.3, fill: true },
+        { label: 'Spending', data: t.map(d => d.spending), borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.1)', tension: 0.3, fill: true },
+      ],
+    },
+    options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } },
+  });
+
+  // Recent transactions
+  const txs = await fetch('/api/transactions?limit=8').then(r => r.json());
+  const el = document.getElementById('recent');
+  if (!txs.length) { el.innerHTML = '<div class="text-sm text-slate-400 py-6 text-center">No transactions yet. Import a statement.</div>'; }
+  else {
+    el.innerHTML = txs.map(t => `
+      <div class="flex items-center justify-between py-2.5">
+        <div class="min-w-0">
+          <div class="text-sm font-medium truncate">${t.description || '(no description)'}</div>
+          <div class="text-xs text-slate-400">${t.date} · ${t.account_name || '—'} · ${t.category_name || 'Uncategorized'}${t.is_transfer ? ' · transfer' : ''}${t.kind ? ' · ' + t.kind : ''}</div>
+        </div>
+        <div class="text-sm font-semibold ${t.amount < 0 ? 'text-rose-600' : 'text-emerald-600'} ${t.is_transfer || (t.kind==='buy'||t.kind==='sell') ? 'opacity-60' : ''}">${fmt(t.amount)}</div>
+      </div>`).join('');
+  }
+
+  // Investments
+  try {
+    const inv = await fetch('/api/investments/summary').then(r => r.json());
+    const grid = document.getElementById('inv-grid');
+    const m = inv.this_month || {};
+    const cells = [
+      ['Portfolio', fmt(inv.portfolio_value), 'text-slate-700'],
+      ['Buys', fmt(m.buys), 'text-rose-600'],
+      ['Sells', fmt(m.sells), 'text-emerald-600'],
+      ['Dividends', fmt(m.dividends), 'text-emerald-600'],
+      ['Interest', fmt(m.interest), 'text-emerald-600'],
+      ['Fees', fmt(m.fees), 'text-rose-600'],
+    ];
+    grid.innerHTML = cells.map(([label, val, color]) => `
+      <div class="rounded-lg bg-slate-50 p-3">
+        <div class="text-xs uppercase tracking-wide text-slate-400">${label}</div>
+        <div class="text-lg font-semibold mt-1 ${color}">${val}</div>
+      </div>`).join('');
+  } catch (e) { /* investments endpoint optional */ }
+}
+load();
+</script>
+{% endblock %}

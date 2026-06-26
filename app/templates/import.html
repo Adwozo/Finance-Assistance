@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Import · Finance Assistance{% endblock %}
+{% block header %}Import statements{% endblock %}
+
+{% block content %}
+<div class="space-y-4 max-w-3xl">
+  <div class="bg-white rounded-xl border border-slate-200 p-4">
+    <div class="font-medium mb-1">How it works</div>
+    <ol class="list-decimal list-inside text-sm text-slate-600 space-y-1">
+      <li>Drop CSV / TXT statements into the <code class="bg-slate-100 px-1 rounded">statements/</code> folder.</li>
+      <li>For non-CSV or unknown formats, ask the agent to run the <code class="bg-slate-100 px-1 rounded">convert_statement</code> MCP tool first.</li>
+      <li>Click <b>Import all</b> below — duplicates are skipped automatically.</li>
+    </ol>
+  </div>
+
+  <div class="bg-white rounded-xl border border-slate-200 p-4">
+    <div class="flex items-center justify-between mb-3">
+      <div class="font-medium">Files in <code>statements/</code></div>
+      <div class="flex gap-2">
+        <button id="detect-transfers" class="px-3 py-1.5 text-sm rounded-md border border-violet-300 text-violet-700 hover:bg-violet-50">Detect transfers</button>
+        <button id="import-all" class="px-3 py-1.5 text-sm rounded-md bg-brand-500 text-white hover:bg-brand-600">Import all</button>
+      </div>
+    </div>
+    <div id="files" class="divide-y divide-slate-100">
+      <div class="text-sm text-slate-400 py-4">Loading…</div>
+    </div>
+  </div>
+
+  <div id="result" class="hidden bg-white rounded-xl border border-slate-200 p-4">
+    <div class="font-medium mb-2">Import results</div>
+    <div id="result-list" class="space-y-2 text-sm"></div>
+  </div>
+</div>
+
+<script>
+async function loadFiles() {
+  const files = await fetch('/api/import/files').then(r => r.json());
+  const el = document.getElementById('files');
+  if (!files.length) { el.innerHTML = '<div class="text-sm text-slate-400 py-4">No files in statements/ folder.</div>'; return; }
+  el.innerHTML = files.map(f => `
+    <div class="flex items-center justify-between py-2.5">
+      <span class="text-sm">${f}</span>
+      <button onclick="importOne('${f}')" class="text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-100">Import</button>
+    </div>`).join('');
+}
+
+async function showResults(res) {
+  const box = document.getElementById('result');
+  const list = document.getElementById('result-list');
+  list.innerHTML = res.map(r => `
+    <div class="border border-slate-200 rounded-md p-3">
+      <div class="flex justify-between"><span class="font-medium">${r.file}</span><span class="text-xs text-slate-400">${r.parser}</span></div>
+      <div class="text-xs text-slate-600 mt-1">Imported: <b>${r.imported}</b> · Skipped: ${r.skipped} · Transfers linked: ${r.transfers_linked || 0} · Categories created: ${r.categories_created || 0}</div>
+      ${r.warnings.length ? `<div class="text-xs text-amber-600 mt-1">${r.warnings.length} warning(s)</div>` : ''}
+    </div>`).join('');
+  box.classList.remove('hidden');
+}
+
+document.getElementById('import-all').addEventListener('click', async () => {
+  const res = await fetch('/api/import', { method: 'POST' }).then(r => r.json());
+  showResults(res);
+  loadFiles();
+});
+
+document.getElementById('detect-transfers').addEventListener('click', async () => {
+  const r = await fetch('/api/transfers/detect', { method: 'POST' }).then(r => r.json());
+  alert(`Linked ${r.linked} transfer pair(s).`);
+});
+
+async function importOne(name) {
+  const res = await fetch(`/api/import/${encodeURIComponent(name)}`, { method: 'POST' }).then(r => r.json());
+  showResults([res]);
+  loadFiles();
+}
+loadFiles();
+</script>
+{% endblock %}

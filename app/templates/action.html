@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}Action Needed · Finance Assistance{% endblock %}
+{% block header %}Action Needed{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <!-- Summary + save bar -->
+  <div class="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap items-center gap-4">
+    <div class="flex items-center gap-2">
+      <div class="w-2.5 h-2.5 rounded-full bg-amber-400"></div>
+      <div class="text-sm"><b id="cnt-uncategorized">0</b> <span class="text-slate-500">uncategorized</span></div>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="w-2.5 h-2.5 rounded-full bg-slate-400"></div>
+      <div class="text-sm"><b id="cnt-uncertain">0</b> <span class="text-slate-500">uncertain</span></div>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="w-2.5 h-2.5 rounded-full bg-rose-400"></div>
+      <div class="text-sm"><b id="cnt-skipped">0</b> <span class="text-slate-500">skipped rows</span></div>
+    </div>
+    <div class="flex-1"></div>
+    <button id="save-csv" class="bg-brand-500 text-white rounded-md px-4 py-2 text-sm hover:bg-brand-600">
+      Save all edits to CSV
+    </button>
+    <span id="save-status" class="text-xs text-slate-400"></span>
+  </div>
+
+  <!-- Tabs -->
+  <div class="bg-white rounded-xl border border-slate-200 p-4">
+    <div class="flex gap-2 border-b border-slate-100 mb-3">
+      <button data-tab="uncategorized" class="tab px-3 py-2 text-sm font-medium text-brand-700 border-b-2 border-brand-500">Uncategorized</button>
+      <button data-tab="uncertain" class="tab px-3 py-2 text-sm font-medium text-slate-500 border-b-2 border-transparent">Uncertain</button>
+      <button data-tab="skipped" class="tab px-3 py-2 text-sm font-medium text-slate-500 border-b-2 border-transparent">Skipped rows</button>
+    </div>
+
+    <!-- Uncategorized + Uncertain tables (same structure) -->
+    <div id="pane-uncategorized" class="tab-pane">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <th class="py-2 pr-3">Date</th>
+              <th class="py-2 pr-3">Description</th>
+              <th class="py-2 pr-3">Account</th>
+              <th class="py-2 pr-3">Amount</th>
+              <th class="py-2 pr-3">Category</th>
+            </tr>
+          </thead>
+          <tbody id="rows-uncategorized" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="pane-uncertain" class="tab-pane hidden">
+      <div class="text-xs text-slate-400 mb-2">These rows were imported but the converter couldn't confidently guess a category (event = "uncertain"). Review and assign one.</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <th class="py-2 pr-3">Date</th>
+              <th class="py-2 pr-3">Description</th>
+              <th class="py-2 pr-3">Account</th>
+              <th class="py-2 pr-3">Amount</th>
+              <th class="py-2 pr-3">Category</th>
+            </tr>
+          </thead>
+          <tbody id="rows-uncertain" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="pane-skipped" class="tab-pane hidden">
+      <div class="text-xs text-slate-400 mb-2">These rows could not be imported (usually because the CSV has unquoted commas or missing fields). Fix the CSV in <code>statements/</code> and re-import.</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <th class="py-2 pr-3">File</th>
+              <th class="py-2 pr-3">Line</th>
+              <th class="py-2 pr-3">Reason</th>
+              <th class="py-2 pr-3">Raw row</th>
+            </tr>
+          </thead>
+          <tbody id="rows-skipped" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const fmt = (n) => Number(n || 0).toLocaleString(undefined, { style: 'currency', currency: window.DEFAULT_CURRENCY || 'HKD' });
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+let data = null;
+
+function catOptions(selectedId) {
+  // Unused — kept for compatibility. The picker is attached per-slot.
+  return '';
+}
+
+function txRow(t) {
+  return `
+    <tr data-id="${t.id}">
+      <td class="py-2.5 pr-3 text-slate-600">${t.date}</td>
+      <td class="py-2.5 pr-3">${esc(t.description || '')}${t.category_event ? ` <span class="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">${esc(t.category_event)}</span>` : ''}</td>
+      <td class="py-2.5 pr-3 text-slate-500">${esc(t.account_name || '—')}</td>
+      <td class="py-2.5 pr-3 text-right font-semibold ${t.amount < 0 ? 'text-rose-600' : 'text-emerald-600'}">${fmt(t.amount)}</td>
+      <td class="py-2.5 pr-3">
+        <span class="cat-slot" data-tx="${t.id}" data-cat="${t.category_id ?? ''}"></span>
+      </td>
+    </tr>`;
+}
+
+function attachPickers(container) {
+  container.querySelectorAll('.cat-slot').forEach(slot => {
+    const txId = Number(slot.dataset.tx);
+    window.initCategoryPicker(slot, {
+      value: slot.dataset.cat === '' ? null : Number(slot.dataset.cat),
+      allowEmpty: true,
+      emptyLabel: 'Uncategorized',
+      onChange: (id) => assignCat(txId, id),
+    });
+  });
+}
+
+async function assignCat(id, catId) {
+  // Save the category to the DB AND write back to the source CSV in one call.
+  await fetch(`/api/transactions/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category_id: catId ? Number(catId) : null, save_to_csv: true }),
+  });
+  // Refresh counts + the active tab so the row disappears from the list.
+  await load();
+}
+
+async function load() {
+  data = await fetch('/api/action/needed').then(r => r.json());
+
+  document.getElementById('cnt-uncategorized').textContent = data.counts.uncategorized;
+  document.getElementById('cnt-uncertain').textContent = data.counts.uncertain;
+  document.getElementById('cnt-skipped').textContent = data.counts.skipped;
+
+  const uncBody = document.getElementById('rows-uncategorized');
+  uncBody.innerHTML =
+    data.uncategorized.length ? data.uncategorized.map(txRow).join('')
+    : '<tr><td colspan="5" class="text-slate-400 py-6 text-center">All transactions are categorized.</td></tr>';
+  attachPickers(uncBody);
+
+  const uncBody2 = document.getElementById('rows-uncertain');
+  uncBody2.innerHTML =
+    data.uncertain.length ? data.uncertain.map(txRow).join('')
+    : '<tr><td colspan="5" class="text-slate-400 py-6 text-center">No uncertain rows.</td></tr>';
+  attachPickers(uncBody2);
+
+  document.getElementById('rows-skipped').innerHTML =
+    data.skipped.length ? data.skipped.map(s => `
+      <tr>
+        <td class="py-2.5 pr-3 text-slate-600">${esc(s.source_file)}</td>
+        <td class="py-2.5 pr-3 text-slate-500">${s.line_number ?? '—'}</td>
+        <td class="py-2.5 pr-3 text-rose-600">${esc(s.reason)}</td>
+        <td class="py-2.5 pr-3 text-slate-500 font-mono text-xs">${esc(s.raw_line || '')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="4" class="text-slate-400 py-6 text-center">No skipped rows. Everything imported cleanly.</td></tr>';
+}
+
+// Tab switching.
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(b => {
+      b.classList.remove('text-brand-700', 'border-brand-500');
+      b.classList.add('text-slate-500', 'border-transparent');
+    });
+    btn.classList.add('text-brand-700', 'border-brand-500');
+    btn.classList.remove('text-slate-500', 'border-transparent');
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+    document.getElementById('pane-' + btn.dataset.tab).classList.remove('hidden');
+  });
+});
+
+// Save all edits to CSV.
+document.getElementById('save-csv').addEventListener('click', async () => {
+  const status = document.getElementById('save-status');
+  status.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/csv/sync', { method: 'POST' }).then(r => r.json());
+    status.textContent = `Synced ${res.total_updated} row(s) across ${res.files.length} file(s).`;
+  } catch (e) {
+    status.textContent = 'Error: ' + e;
+  }
+});
+
+load();
+</script>
+{% endblock %}
